@@ -70,3 +70,8 @@ fabric.properties
 
 # Pycharm
 .idea
+
+
+# test
+*.pkl
+*.png
