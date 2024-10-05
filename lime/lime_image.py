@@ -14,6 +14,9 @@ from tqdm.auto import tqdm
 from . import lime_base
 from .wrappers.scikit_image import SegmentationAlgorithm
 
+from paddleocr import PaddleOCR
+import cv2
+
 
 class ImageExplanation(object):
     def __init__(self, image, segments):
@@ -126,11 +129,43 @@ class LimeImageExplainer(object):
         self.feature_selection = feature_selection
         self.base = lime_base.LimeBase(kernel_fn, verbose, random_state=self.random_state)
 
+    @staticmethod
+    def ocr_segmentation_fn(image):
+        """
+        Segments the image based on text detection using PaddleOCR.
+
+        Args:
+            image (numpy.ndarray): The input image.
+
+        Returns:
+            numpy.ndarray: A 2D array where each segment is labeled with a unique integer.
+        """
+
+        # Initialize the OCR model
+        ocr = PaddleOCR(use_angle_cls=False, lang='en', det=True, rec=False)
+
+        # Perform text detection
+        result = ocr.ocr(image, det=True, rec=False)
+        H, W, _ = image.shape
+
+        # Initialize segments array
+        segments = np.ones((H, W), dtype=np.int32)
+        segment_id = 2  # Start from 2 to avoid overwriting background labeled as 1
+
+        for detection in result[0]:
+            points = np.array(detection, dtype=np.int32)
+            x, y, w, h = cv2.boundingRect(points)
+            segments[y:y + h, x:x + w] = segment_id
+            segment_id += 1
+
+        return segments
+
     def explain_instance(self, image, classifier_fn, labels=(1,),
                          hide_color=None,
                          top_labels=5, num_features=100000, num_samples=1000,
                          batch_size=10,
                          segmentation_fn=None,
+                         ocr_segmentation=False,
                          distance_metric='cosine',
                          model_regressor=None,
                          random_seed=None,
@@ -177,10 +212,13 @@ class LimeImageExplainer(object):
         if random_seed is None:
             random_seed = self.random_state.randint(0, high=1000)
 
-        if segmentation_fn is None:
-            segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4,
-                                                    max_dist=200, ratio=0.2,
-                                                    random_seed=random_seed)
+        if ocr_segmentation:
+            segmentation_fn = self.ocr_segmentation_fn
+        else:
+            if segmentation_fn is None:
+                segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4,
+                                                        max_dist=200, ratio=0.2,
+                                                        random_seed=random_seed)
         segments = segmentation_fn(image)
 
         fudged_image = image.copy()
