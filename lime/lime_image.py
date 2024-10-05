@@ -160,12 +160,54 @@ class LimeImageExplainer(object):
 
         return segments
 
+    @staticmethod
+    def layout_analysis_segmentation_fn(image):
+        from transformers import AutoImageProcessor, DeformableDetrForObjectDetection
+        import torch
+        import numpy as np
+        from PIL import Image
+        import cv2
+
+        image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+        # Caricamento del modello e del processore
+        processor = AutoImageProcessor.from_pretrained("Aryn/deformable-detr-DocLayNet")
+        model = DeformableDetrForObjectDetection.from_pretrained("Aryn/deformable-detr-DocLayNet")
+
+        # Prepara l'immagine per il modello
+        inputs = processor(images=image, return_tensors="pt")
+        outputs = model(**inputs)
+        # print(image.size)
+        # Post-elaborazione per ottenere i risultati
+        target_sizes = torch.tensor([image.size[::-1]])
+        results = processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=0.5)[0]
+
+        # Inizializzazione della mappa di segmentazione
+        H, W = image.size[1], image.size[0]  # Dimensioni dell'immagine PIL
+        segments = np.ones((H, W), dtype=np.int32)
+
+        segment_id = 2  # Partiamo da 2 per evitare che 1 sia sovrascritto (1 = sfondo)
+
+
+        # Iterazione sui risultati del layout detection
+        for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+            # Ottieni le coordinate del bounding box
+            x_min, y_min, x_max, y_max = [round(i) for i in box.tolist()]
+
+            # Aggiungi una nuova regione alla mappa di segmentazione
+            segments[y_min:y_max, x_min:x_max] = segment_id
+            segment_id += 1
+
+
+        return segments
+
     def explain_instance(self, image, classifier_fn, labels=(1,),
                          hide_color=None,
                          top_labels=5, num_features=100000, num_samples=1000,
                          batch_size=10,
                          segmentation_fn=None,
                          ocr_segmentation=False,
+                         layout_analysis=False,
                          distance_metric='cosine',
                          model_regressor=None,
                          random_seed=None,
@@ -214,6 +256,8 @@ class LimeImageExplainer(object):
 
         if ocr_segmentation:
             segmentation_fn = self.ocr_segmentation_fn
+        elif layout_analysis:
+            segmentation_fn = self.layout_analysis_segmentation_fn
         else:
             if segmentation_fn is None:
                 segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4,
